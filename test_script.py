@@ -62,3 +62,18 @@ class AutoEncoder(nn.Module):
         l1_loss = self.l1_coeff * (acts.float().abs().sum())
         loss = l2_loss + l1_loss
         return loss, x_reconstruct, acts, l2_loss, l1_loss
+
+def load_model():
+    model = HookedTransformer.from_pretrained("gelu-1l").to(DTYPES[cfg["enc_dtype"]])
+    n_layers = model.cfg.n_layers
+    d_model = model.cfg.d_model
+    n_heads = model.cfg.n_heads
+    d_head = model.cfg.d_head
+    d_mlp = model.cfg.d_mlp
+    d_vocab = model.cfg.d_vocab
+
+    return model
+
+if __name__ == "__main__":
+    model = load_model()
+    print(model.cfg)
