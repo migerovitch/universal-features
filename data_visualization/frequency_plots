@@ -1,0 +1,163 @@
+import platform
+import os
+import sys
+import math
+import einops
+from einops import rearrange, reduce, repeat
+
+import typing as T
+import torch
+from torch.nn.functional import cosine_similarity
+from tqdm import tqdm
+import numpy as np
+from datasets import load_dataset
+
+from transformer_lens import utils
+import matplotlib.pyplot as plt
+
+if platform.system() == "Windows":
+    sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+from dictionary import AutoEncoder
+
+
+from nnsight import LanguageModel
+import nnsight
+import matplotlib.gridspec as gridspec
+
+
+def get_acts(model, prompt, ae, layer):
+    """gets activations for a given prompt and layer"""
+    result = []
+    with model.invoke(prompt):
+        result.append(model.gpt_neox.layers[layer].mlp.output.save())
+    return result[0].value
+
+
+def create_frequency_plot(model, ae_path, layer):
+    dataset = load_dataset("NeelNanda/pile-10k", split="train[:40]")
+    data = [item["text"][:1000000] for item in dataset]
+    data = "".join(data)
+
+    print(len(data))
+
+    ae = torch.load(ae_path, map_location=torch.device("cuda"))
+    model_acts = get_acts(model, data, ae, layer).to("cuda").squeeze()
+    acts = ae.encode(model_acts).squeeze()
+    # compute mean L0 norm and percentage of neurons alive
+    actives = acts != 0
+    freqs = actives.float().mean(dim=0)
+
+    fig, ax = plt.subplots()
+    ax.hist(freqs.cpu(), bins=torch.logspace(-5, 0, 100))
+    ax.set_xscale("log")
+
+    return fig, freqs.cpu()
+
+
+def create_frequency_matrix(ae_paths_and_layers):
+    plots = {}
+    mod = LanguageModel(
+        f"EleutherAI/pythia-70m",
+        device_map="cpu",
+    )
+    models = ["layer 0", "layer 1", "layer 2", "layer 3"]
+    sizes = ["1:1", "1:2", "1:4", "1:8"]
+    for model in models:
+        for size in sizes:
+            ae_path = ae_paths_and_layers[model, size][0]
+            ae_layer = ae_paths_and_layers[model, size][1]
+            _, freqs = create_frequency_plot(mod, ae_path, ae_layer)
+            plots[(model, size)] = freqs
+    fig = plt.figure(figsize=(30, 15))
+
+    gs = gridspec.GridSpec(4, 4)
+
+    for i, model in enumerate(models):
+        for j, size in enumerate(sizes):
+            ax = plt.subplot(gs[i, j])
+            ax.hist(plots[(model, size)], bins=torch.logspace(-5, 0, 100))
+            ax.set_xscale("log")
+            ax.set_title(f"Pythia {model} - {size} Projection (L0)")
+            ax.set_xlabel("Activation Frequency")
+            ax.set_ylabel("Number of Features Activating")
+
+    fig.suptitle(
+        "Feature Activation Frequency Distributions by Layer", fontsize=24, y=0.99
+    )
+
+    hist_save_path = "./plots/frequency_plot"
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(hist_save_path)
+    plt.close()
+
+
+aes = {
+    ("layer 0", "1:1"): ("/home/dictionary_learning/d/70m/l0/L0_512_1211-103542.pt", 0)
+}
+aes[("layer 0", "1:2")] = (
+    "/home/dictionary_learning/d/70m/l0/L0_1024_1212-162446.pt",
+    0,
+)
+aes[("layer 0", "1:4")] = (
+    "/home/dictionary_learning/d/70m/l0/L0_2048_1211-100515.pt",
+    0,
+)
+aes[("layer 0", "1:8")] = (
+    "/home/dictionary_learning/d/70m/l0/L0_4096_1212-182713.pt",
+    0,
+)
+
+aes[("layer 1", "1:1")] = (
+    "/home/dictionary_learning/d/70m/l1/L1_512_1211-103542.pt",
+    1,
+)
+aes[("layer 1", "1:2")] = (
+    "/home/dictionary_learning/d/70m/l1/L1_1024_1212-162446.pt",
+    1,
+)
+aes[("layer 1", "1:4")] = (
+    "/home/dictionary_learning/d/70m/l1/L1_2048_1211-100515.pt",
+    1,
+)
+aes[("layer 1", "1:8")] = (
+    "/home/dictionary_learning/d/70m/l1/L1_4096_1212-182713.pt",
+    1,
+)
+
+aes[("layer 2", "1:1")] = (
+    "/home/dictionary_learning/d/70m/l2/L2_512_1211-103542.pt",
+    2,
+)
+aes[("layer 2", "1:2")] = (
+    "/home/dictionary_learning/d/70m/l2/L2_1024_1212-162446.pt",
+    2,
+)
+aes[("layer 2", "1:4")] = (
+    "/home/dictionary_learning/d/70m/l2/L2_2048_1212-191406.pt",
+    2,
+)
+aes[("layer 2", "1:8")] = (
+    "/home/dictionary_learning/d/70m/l2/L2_4096_1212-182713.pt",
+    2,
+)
+
+
+aes[("layer 3", "1:1")] = (
+    "/home/dictionary_learning/d/70m/l3/L3_512_1211-103542.pt",
+    3,
+)
+aes[("layer 3", "1:2")] = (
+    "//home/dictionary_learning/d/70m/l3/L3_1024_1212-162446.pt",
+    3,
+)
+aes[("layer 3", "1:4")] = (
+    "/home/dictionary_learning/d/70m/l3/L3_2048_1211-100515.pt",
+    3,
+)
+aes[("layer 3", "1:8")] = (
+    "/home/dictionary_learning/d/70m/l3/L3_4096_1212-182713.pt",
+    3,
+)
+
+create_frequency_matrix(aes)

@@ -1,0 +1,83 @@
+import platform
+import os
+import sys
+
+
+import torch
+import numpy as np
+
+if platform.system() == "Windows":
+    sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+from dictionary import AutoEncoder
+
+
+from nnsight import LanguageModel
+import nnsight
+
+# from buffer import ActivationBuffer
+# from training import trainSAE
+
+activation_dim = 512 # dimension of the NN's activations to be autoencoded
+dictionary_size = 32768 # number of features in the dictionary
+ae = AutoEncoder(activation_dim, dictionary_size)
+ae.load_state_dict(torch.load("./data/layer_0/ae.pt", map_location=torch.device('cpu')))
+
+#graph = nnsight.tracing.Graph.Graph(ae)
+
+#print(graph)
+
+# print(ae.encoder.weight)
+# get NN activations using your preferred method: hooks, transformer_lens, nnsight, etc. ...
+# for now we'll just use random activations
+# activations = torch.randn(64, activation_dim)
+# features = ae.encode(activations) # get features from activations
+# reconstructed_activations = ae.decode(features)
+
+model = LanguageModel(
+    'EleutherAI/pythia-70m-deduped', # this can be any Huggingface model
+    device_map = 'cpu'
+)
+
+prompt = "The city of Paris is in the country of"
+
+# with model.invoke(prompt) as invoker:
+#     pass # no changes to make in the forward pass
+# logits = invoker.output.logits
+# logits = logits[0,-1,:] # only over the final token
+# probs = logits.softmax(dim=-1)
+
+def get_acts(prompt):
+    outs = []
+    with model.invoke(prompt):
+        for layer in model.gpt_neox.layers:
+            outs.append(layer.mlp.output.save())
+    return [out.value for out in outs]
+
+def get_logits_ae(prompt):
+    with model.invoke(prompt) as invoker:
+        pass #model.gpt_neox.layers[0].mlp.output = ae(model.gpt_neox.layers[0].mlp.output)
+    print(invoker.output.logits)
+
+def print_layers(model):
+    for layer in model.gpt_neox.layers:
+        print(layer)
+
+def run_model(model, prompt, ae = None):
+    with model.generate(max_new_tokens=10) as generator:
+        with generator.invoke(prompt) as invoker:
+            if ae is not None:
+                model.gpt_neox.layers[1].mlp.output = ae(model.gpt_neox.layers[1].mlp.output)
+
+    for token in generator.output:
+        print(model.tokenizer.decode(token))
+
+# get_logits_ae(prompt)
+
+
+# for tok, prob in zip(probs.topk(10).indices, probs.topk(10).values):
+#     print(f"p({model.tokenizer.decode(tok)}) = {prob:.3f}")
+
+# submodule = model.gpt_neox.layers[1].mlp # layer 1 MLP
+# activation_dim = 512 # output dimension of the MLP
+# dictionary_size = 64 * activation_dim

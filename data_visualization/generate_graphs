@@ -1,0 +1,163 @@
+import platform
+import os
+import sys
+import math
+import einops
+from einops import rearrange, reduce, repeat
+import typing as T
+import torch
+from torch.nn.functional import cosine_similarity
+from tqdm import tqdm
+import numpy as np
+from datasets import load_dataset
+from transformer_lens import utils
+import matplotlib.pyplot as plt
+
+if platform.system() == "Windows":
+    sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from dictionary import AutoEncoder
+from nnsight import LanguageModel
+import nnsight
+
+
+def get_encoded_acts(model, prompt, ae, layer):
+    """gets activations for a given prompt and layer"""
+    result = []
+    with model.invoke(prompt):
+        result.append(model.gpt_neox.layers[layer].mlp.output.save())
+    model_acts = result[0].value.to("cuda").squeeze()
+    return ae.encode(model_acts).squeeze()
+
+
+def compute_max_average_correlation(small_acts, big_acts):
+    """Compute the max average correlation between small and big activations"""
+    epsilon = 1e-5
+    # Normalize small_acts
+    # small_acts_mean = torch.mean(small_acts, dim=0, keepdim=True)
+    # small_acts_std = torch.std(small_acts, dim=0, keepdim=True)
+    # small_acts = (small_acts - small_acts_mean) / (small_acts_std + epsilon)
+    # # Normalize big_acts
+    # big_acts_mean = torch.mean(big_acts, dim=0, keepdim=True)
+    # big_acts_std = torch.std(big_acts, dim=0, keepdim=True)
+    # big_acts = (big_acts - big_acts_mean) / (big_acts_std + epsilon)
+
+    covariance_matrix = torch.mm(small_acts.T, big_acts)
+    denominator = torch.sqrt(
+        torch.sum(small_acts**2, dim=0, keepdim=True).T
+        * torch.sum(big_acts**2, dim=0, keepdim=True)
+    )
+
+    pearson_correlation = covariance_matrix / (denominator + epsilon)
+    pearson_correlation = torch.where(
+        pearson_correlation == 0, torch.tensor(int(-2000)), pearson_correlation
+    )
+
+    max_correlations = torch.max(pearson_correlation, dim=1).values
+
+    mask = max_correlations != -2000
+    max_correlations = max_correlations[mask]
+
+    avg_max_correlation = torch.mean(max_correlations)
+    return avg_max_correlation.item()
+
+
+def activation_correlations(model_name, path1, path2, layer1, layer2):
+    """returns avg max correlation between 2 autoencoders"""
+    model = LanguageModel(
+        model_name,  # this can be any Huggingface model
+        device_map="cuda",
+    )
+    dataset = load_dataset("NeelNanda/pile-10k", split="train[:30]")
+    data = [item["text"][:1000] for item in dataset]
+
+    first_ae = torch.load(path1, map_location=torch.device("cuda"))
+    second_ae = torch.load(path2, map_location=torch.device("cuda"))
+    avg_over_prompts = []
+    for prompt in data:
+        # activation shape: (tokens in prompt) x activation_dim
+        first_acts = get_encoded_acts(model, prompt, first_ae, 0)
+        second_acts = get_encoded_acts(model, prompt, second_ae, 0)
+
+        avg_max_correlation = compute_max_average_correlation(first_acts, second_acts)
+        avg_over_prompts.append(avg_max_correlation)
+
+    return np.mean(avg_over_prompts)
+
+
+def load_ae(path):
+    return torch.load(
+        "/home/dictionary_learning/data/layer_0/L0_2048_1212-191406.pt",
+        map_location=torch.device("cuda"),
+    )
+
+
+def get_cosine_matrix_updated(weights1, weights2):
+    # Normalize each row in weights1 and weights2
+    weights1_norm = torch.nn.functional.normalize(weights1, dim=1)
+    weights2_norm = torch.nn.functional.normalize(weights2, dim=1)
+    # print(weights1_norm.shape, weights2_norm.shape)
+    # Compute the cosine similarity matrix
+    cos_matrix = torch.mm(weights1_norm, weights2_norm.transpose(0, 1))
+    return cos_matrix
+
+
+def mean_cos_sim(f1, f2, device="cpu", encoder_or_decoder="decoder"):
+    f1 = torch.load(f1, map_location=torch.device(device))
+    f2 = torch.load(f2, map_location=torch.device(device))
+    if encoder_or_decoder == "encoder":
+        weights1 = f1.encoder
+        weights2 = f2.encoder
+    elif encoder_or_decoder == "decoder":
+        weights1 = f1.decoder
+        weights2 = f2.decoder
+    else:
+        raise ValueError("encoder_or_decoder must be 'encoder' or 'decoder'")
+    cos_matrix = get_cosine_matrix_updated(weights1, weights2)
+    max_cos_L = torch.max(cos_matrix, dim=1).values
+    max_cos_R = torch.max(cos_matrix, dim=0).values
+    mean_L = torch.mean(max_cos_L).item()
+    mean_R = torch.mean(max_cos_R).item()
+    return mean_L, mean_R
+
+
+def generate(main_ae_path, main_layer, other_ae_paths, model_name, metric="mcs"):
+    values = []
+    for ae_path, other_layer in other_ae_paths:
+        if metric == "correlation":
+            values.append(
+                activation_correlations(
+                    model_name, main_ae_path, ae_path, main_layer, other_layer
+                )
+            )
+        elif metric == "mcs":
+            values.append(mean_cos_sim(main_ae_path, ae_path))
+
+    x_values = [2**i for i in range(len(values))]
+
+    # Plotting
+    plt.figure(figsize=(len(values), 6))
+    plt.plot(x_values, values, marker="o")
+
+    # Setting the x-axis to log scale
+    plt.xscale("log", base=2)
+
+    # Adding labels and title
+    plt.xlabel("Autoencoder Projection Ratio")
+
+    if metric == "correlation":
+        plt.ylabel("Correlation of Autoencoder Activations")
+        plt.title("Activation Correlation with 1:32 Autoencoder (L0, 160m)")
+
+    elif metric == "mcs":
+        plt.ylabel("Mean Cosine Similarity Between Decoder Weights")
+        plt.title("Pairwise Decoder MCS with 1:32 Autoencoder (L0, 160m)")
+
+    hist_save_path = "./plots/plot"
+    plt.savefig(hist_save_path)
+    plt.close()
+
+
+aes = [("/home/dictionary_learning/d/160m/l0/L0_768_1211-114022.pt", 0)]
+
+# ('/home/dictionary_learning/d/160m/l0/L0_3072_1211-092238.pt', 2), ('/home/dictionary_learning/d/160m/l0/L0_6144_1211-104428.pt', 3), ('/home/dictionary_learning/d/160m/l0/L0_12288_1212-114555.pt', 4)
+# generate('/home/dictionary_learning/d/160m/l5/L5_768_1211-114022.pt', 6, aes, "EleutherAI/pythia-60m", "mcs")
