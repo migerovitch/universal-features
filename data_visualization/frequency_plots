@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 if platform.system() == "Windows":
     sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from dictionary import AutoEncoder
+from autoencoders.dictionary import AutoEncoder
 
 
 from nnsight import LanguageModel
@@ -53,7 +53,6 @@ def create_frequency_plot(model, ae_path, layer):
     ax.set_xscale("log")
 
     return fig, freqs.cpu()
-
 
 def create_frequency_matrix(ae_paths_and_layers):
     plots = {}

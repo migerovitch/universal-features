@@ -31,25 +31,28 @@ def generate_attention_map(aes, analysis_func, acts=[], encoder_or_decoder="deco
 
 
 # Create a function to plot the attention maps
-def plot_maps(files,  row_labels, col_labels, analysis_func, encoder_or_decoder="decoder", path='./plots/plot', title="NA", n_layers=1, n_maps=1, models=None, device='cpu'):
+def plot_maps(ae_filepaths,  row_labels, col_labels, analysis_func, encoder_or_decoder="decoder", path='./plots/plot', title="NA", n_layers=1, n_maps=1, models=None, device='cpu'):
     text_fontsize = 10
     
-    data = get_data(30, 10000)
+    data = get_data(30, 400)
 
     # print(len("\n".join(data)))
     data = ["\n".join(data)]
     acts = []
     if analysis_func == 'corr':
         for i, model in enumerate(models):
-            acts.append(get_activations(model, files[i], data, device=device))
+            torch.cuda.empty_cache()
+            print(f'getting activations for {model} | i = {i}')
+            acts.append(get_activations(model, ae_filepaths[i], data, device=device))
+
 
     fig, axes = plt.subplots(n_layers, n_maps, figsize=(9, 6))
     if n_layers == 1 or n_maps == 1:
         axes = np.array(axes).reshape(n_layers, n_maps)
-    #aes = [torch.load(file, map_location=torch.device(device)) for file in files]
+    #aes = [torch.load(file, map_location=torch.device(device)) for file in ae_filepaths]
     for i in range(n_layers):
         for j in range(n_maps):
-            data = generate_attention_map(files, analysis_func, acts = acts, encoder_or_decoder=encoder_or_decoder, models=models, device=device)  # To make the example deterministic
+            data = generate_attention_map(ae_filepaths, analysis_func, acts = acts, encoder_or_decoder=encoder_or_decoder, models=models, device=device)  # To make the example deterministic
             print(data)
             ax = axes[i, j]
             cax = ax.matshow(data, cmap='YlGn', vmin=0, vmax=1)
@@ -75,18 +78,23 @@ def plot_maps(files,  row_labels, col_labels, analysis_func, encoder_or_decoder=
 # plot_attention_maps()
 
 # file1 = "./trained_models\EleutherAI_pythia-70m\openwebtext-100k_s0\layer_0\L0_4096_1212-182713.pt"
-file1 = "./trained_models/EleutherAI_pythia-70m/openwebtext-100k_s0/layer_0/L0_4096_1212-182713.pt"
-file2 = "./trained_models/EleutherAI_pythia-160m/openwebtext-100k_s0/layer_0/L0_6144_1211-104428.pt" #"./trained_models\EleutherAI_pythia-160m\openwebtext-100k_s0\layer_0\L0_6144_1211-104428.pt"
-file3 = "./trained_models/EleutherAI_pythia-410m/openwebtext-100k_s0/layer_0/L0_8192_1211-150437.pt" #"./trained_models\EleutherAI_pythia-410m\openwebtext-100k_s0\layer_0\L0_8192_1211-150437.pt"
 
-files = [file1, file2, file3]
-row_labels = ["Pythia-70m 1:8", "Pythia-160m 1:8", "Pythia-410m 1:8"]#[file.split('//')[-1][:-15] for file in files]
-col_labels = [file.split('//')[-1][:-15] for file in files]
+if __name__ == "__main__":
+    torch.cuda.empty_cache()
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    file1 = "./openwebtext-100k_s0/layer_0/L0_4096_1212-182713.pt"
+    file3 = "./openwebtext-100k_s0/layer_0/L0_32768_1211-080120.pt" #"./trained_models\EleutherAI_pythia-160m\openwebtext-100k_s0\layer_0\L0_6144_1211-104428.pt"
+    file2 = "./openwebtext-100k_s0/layer_0/L0_8192_1211-052011.pt" #"./trained_models\EleutherAI_pythia-410m\openwebtext-100k_s0\layer_0\L0_8192_1211-150437.pt"
 
-plot_title = "1:8 AEs trained on 3 model sizes (layer 0)"
+    ae_filepaths = [file1, file2, file3]
+    row_labels = ["Pythia-70m 1:8", "Pythia-70m 1:16", "Pythia-70m 1:32"] # ["Pythia-70m 1:8", "Pythia-160m 1:8", "Pythia-410m 1:8"]#[file.split('//')[-1][:-15] for file in ae_filepaths]
+    col_labels = [file.split('//')[-1][:-15] for file in ae_filepaths]
 
-model_names = ("EleutherAI/pythia-70m", "EleutherAI/pythia-160m", "EleutherAI/pythia-410m")
-start_time = datetime.now().strftime("%m%d-%H%M%S")
+    plot_title = "1:8 AEs trained on 3 model sizes (layer 0)"
 
-save_path = f"./plots/plot_{start_time}"
-plot_maps(files, row_labels, col_labels, 'corr', path=save_path, title = plot_title, n_layers=1, n_maps=1,  models=model_names, device='cuda')
+    model_names = ("EleutherAI/pythia-70m", "EleutherAI/pythia-70m", "EleutherAI/pythia-70m") #, "EleutherAI/pythia-160m", "EleutherAI/pythia-410m")
+    start_time = datetime.now().strftime("%m%d-%H%M%S")
+
+    save_path = f"./plots/plot_{start_time}"
+
+    plot_maps(ae_filepaths, row_labels, col_labels, 'corr', path=save_path, title = plot_title, n_layers=1, n_maps=1,  models=model_names, device='cuda')

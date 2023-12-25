@@ -14,7 +14,7 @@ from datasets import load_dataset
 
 if platform.system() == "Windows":
     sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from dictionary import AutoEncoder
+from autoencoders.dictionary import AutoEncoder
 
 from nnsight import LanguageModel
 
@@ -26,8 +26,8 @@ def get_encoded_acts(model, prompt, ae, layer, device=device):
     with model.invoke(prompt):
         result.append(model.gpt_neox.layers[layer].mlp.output.save())
     model_acts = result[0].value.to(device).squeeze()
-    return ae.encode(model_acts).squeeze()
-
+    output = ae.encode(model_acts).squeeze()
+    return output
 
 def compute_max_average_correlation(small_acts, big_acts, device='cpu'):
     """Compute the max average correlation between small and big activations"""
@@ -56,35 +56,35 @@ def compute_max_average_correlation(small_acts, big_acts, device='cpu'):
     return avg_max_correlation.item()
 
 
-def activation_correlations(model_name, path1, path2, layer1=0, layer2=0, device='cpu'):
-    """returns avg max correlation between 2 autoencoders"""
-    if isinstance(model_name, tuple):
-        model1 = LanguageModel(
-            model_name[0],  # this can be any Huggingface model
-            device_map=device,
-        )
-        model2 = LanguageModel(
-            model_name[1],  # this can be any Huggingface model
-            device_map=device,
-        )
-    else:
-        model = LanguageModel(
-            model_name,  # this can be any Huggingface model
-            device_map=device,
-        )
-        model1, model2 = model, model
-    dataset = load_dataset("NeelNanda/pile-10k", split="train[:30]")
-    data = [item["text"][:1000] for item in dataset]
-    first_ae = torch.load(path1, map_location=torch.device(device))
-    second_ae = torch.load(path2, map_location=torch.device(device))
-    avg_over_prompts = []
-    for prompt in data:
-        # activation shape: (tokens in prompt) x activation_dim
-        first_acts = get_encoded_acts(model1, prompt, first_ae, 0, device=device)
-        second_acts = get_encoded_acts(model2, prompt, second_ae, 0, device=device)
-        avg_max_correlation = compute_max_average_correlation(first_acts, second_acts)
-        avg_over_prompts.append(avg_max_correlation)
-    return np.mean(avg_over_prompts)
+# def activation_correlations(model_name, path1, path2, layer1=0, layer2=0, device='cpu'):
+#     """returns avg max correlation between 2 autoencoders"""
+#     if isinstance(model_name, tuple):
+#         model1 = LanguageModel(
+#             model_name[0],  # this can be any Huggingface model
+#             device_map=device,
+#         )
+#         model2 = LanguageModel(
+#             model_name[1],  # this can be any Huggingface model
+#             device_map=device,
+#         )
+#     else:
+#         model = LanguageModel(
+#             model_name,  # this can be any Huggingface model
+#             device_map=device,
+#         )
+#         model1, model2 = model, model
+#     dataset = load_dataset("NeelNanda/pile-10k", split="train[:30]")
+#     data = [item["text"][:1000] for item in dataset]
+#     first_ae = torch.load(path1, map_location=torch.device(device))
+#     second_ae = torch.load(path2, map_location=torch.device(device))
+#     avg_over_prompts = []
+#     for prompt in data:
+#         # activation shape: (tokens in prompt) x activation_dim
+#         first_acts = get_encoded_acts(model1, prompt, first_ae, 0, device=device)
+#         second_acts = get_encoded_acts(model2, prompt, second_ae, 0, device=device)
+#         avg_max_correlation = compute_max_average_correlation(first_acts, second_acts)
+#         avg_over_prompts.append(avg_max_correlation)
+#     return np.mean(avg_over_prompts)
 
 
 def get_data(num_rows, row_len):
@@ -105,8 +105,9 @@ def get_activations(model_name, path, data, device='cpu'):
 
     acts = []
     for prompt in data:
+        #print(len(prompt))
         # activation shape: (tokens in prompt) x activation_dim
-        acts.append(get_encoded_acts(model, prompt, ae, 0, device=device))
+        acts.append(get_encoded_acts(model, prompt, ae, 0, device=device).detach().cpu())
 
     return acts
 
@@ -115,7 +116,7 @@ def get_correlation_from_acts(acts1, acts2, device):
     assert(len(acts1) == len(acts2)), f"expected activations to be the same size but {len(acts1)} != {len(acts2)}"
     for i in range(len(acts1)):
         # activation shape: (tokens in prompt) x activation_dim
-        avg_max_correlation = compute_max_average_correlation(acts1[i], acts2[i], device=device)
+        avg_max_correlation = compute_max_average_correlation(acts1[i].to(device), acts2[i].to(device), device=device)
         avg_over_prompts.append(avg_max_correlation)
     return np.mean(avg_over_prompts)
 
@@ -124,17 +125,20 @@ if __name__ == "__main__":
     model_name = "EleutherAI/pythia-70m"
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    path1 = './trained_models/EleutherAI_pythia-70m/openwebtext-100k_s0/layer_0/L0_2048_1212-191406_D1.pt'
-    path2 = './trained_models/EleutherAI_pythia-70m/openwebtext-100k_s0/layer_0/L0_2048_1212-194010_D2.pt'
-    corr = activation_correlations(model_name, path1, path2, device=device)
-    print(f'method 1 corr: {corr}')
+    file1 = "./openwebtext-100k_s0/layer_0/L0_4096_1212-182713.pt"
+    file2 = "./openwebtext-100k_s0/layer_0/L0_32768_1211-080120.pt"
+    
+    # path1 = './openwebtext-100k_s0/layer_0/L0_2048_1212-191406_D1.pt'
+    # path2 = './openwebtext-100k_s0/layer_0/L0_2048_1212-194010_D2.pt'
+    # corr = activation_correlations(model_name, file2, file2, device=device)
+    # print(f'method 1 corr: {corr}')
     
     
-    data = get_data(30, 1000)
-
+    data = get_data(30, 500)
+    data = ["\n".join(data)]
     print(len("\n".join(data)))
-    acts1 = get_activations(model_name, path1, data, device=device)
-    acts2 = get_activations(model_name, path2, data, device=device)
+    acts1 = get_activations(model_name, file1, data, device=device)
+    acts2 = get_activations(model_name, file2, data, device=device)
 
     corr = get_correlation_from_acts(acts1, acts2, device=device)
 
