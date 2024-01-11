@@ -16,4 +16,4 @@ Asher Parker-Sartori and Misha Gerovitch completed this project as our final for
 
 - easy_training_base.(py/ipynb) as well as some other helper code was copied (with adaptations) from [loganriggs/sparse_coding](https://github.com/loganriggs/sparse_coding) to train our own sparse autoencoders.
 - analysis and data_visualization directories contain the scripts we used to create the visuals and results sections for our project.
-- we ran initial examples on pre-trained sparse autoencoders from [samrmarks/dictionary_learning](https://github.com/saprmarks/dictionary_learning).
+- we started off by analysing pre-trained sparse autoencoders from [samrmarks/dictionary_learning](https://github.com/saprmarks/dictionary_learning).
